@@ -1,4 +1,5 @@
 # 修正後程式碼
+
 import org.apache.spark._
 
 import org.apache.spark.SparkConf
