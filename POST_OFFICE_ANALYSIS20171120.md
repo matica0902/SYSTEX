@@ -1,3 +1,85 @@
+# 修正後程式碼
+import org.apache.spark._
+import org.apache.spark.SparkConf
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.functions._
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
+import java.util.Date
+
+
+
+case class ResultSchema1(PKGNO:String, STATUSA2:String, STATUSB1:String, STATUSB2:String, PROC_DATEA:String, PROC_TIMEA:String, PROC_DTA:String, PROC_BRHA:String, PROC_DATEB:String, PROC_TIMEB:String, PROC_DTB:String, PROC_BRHB:String, PKGVALUE:String, PKGCOLL:String, PKGWEIGHT:String, PKGPOST:String, CONTRACTNO1:String, CONTRACTNO2:String, DESTZIPCODE:String, DESTZIPCODE_LEN:Int, PROC_YMA:String, PROC_YMB:String)
+case class ResultSchema2(PKGNO:String, PROC_H:String, REASON:String, REC_BRH:String, REC_BRH_TEL:String, HOURS:Float)
+
+object Main {
+  def main(args:Array[String]):Unit = {
+    def getTimeStamp(s: String): Timestamp = {
+      val format = new SimpleDateFormat("yyyy-MM-ddHH:mm:ss")
+      val d = format.parse(s)
+      val t = new Timestamp(d.getTime())
+      return t
+    }
+
+    def getSortValue(v: Iterable[String]): String = {
+      val l = v.toList.sorted; return l(0)
+    }
+
+    def getRecord(r: (String, List[String])): Option[List[String]] = {
+      val res = r._2.find(s => s.slice(0, 0 + 13) > r._1.slice(0, 0 + 13))
+      if (res.isDefined) {
+        Some(List(r._1, res.get))
+      } else None
+    }
+
+    def getHours(b: String, e: String): String = {
+      val h = "%.2f".format((e.toDouble - b.toDouble) / 1000 / 3600); return h
+    }
+
+
+    val pkgCodeLst = List("70", "71", "72", "73", "74", "75", "76", "78")
+    val conf = new SparkConf().setAppName("post office poc").setMaster("local")
+    val sc = new SparkContext(conf)
+    val sqlContext = new SQLContext(sc)
+    import sqlContext.implicits._
+
+    val a = sc.textFile("hdfs://quickstart.cloudera:8020/tmp/sam03.txt").filter(r => pkgCodeLst.contains(r.slice(14, 14 + 2))).cache()
+    val akv = a.filter(r => r.matches("^A.*")).distinct().map(r => (r.slice(2, 2 + 20), "%s%s".format(getTimeStamp(r.slice(22, 22 + 18)).getTime().toString, r))).groupByKey().mapValues(getSortValue(_))
+    val hikv = a.filter(r => (r.matches("^H.*") || r.matches("^I.*"))).distinct().map(r => (r.slice(2, 2 + 20), "%s%s".format(getTimeStamp(r.slice(22, 22 + 18)).getTime().toString, r))).groupByKey().mapValues(_.toList.sorted)
+
+    a.unpersist()
+    val reskv = akv.join(hikv).mapValues(getRecord(_).getOrElse(List())).values.filter(!_.isEmpty).cache()
+    val restb1 = reskv.map(c => Array(c(0).slice(15, 15 + 20), c(0).slice(14, 14 + 1), c(1).slice(13, 13 + 1), c(1).slice(14, 14 + 1), c(0).slice(35, 35 + 10) + " 00:00:00", c(0).slice(45, 45 + 8), c(0).slice(35, 35 + 10) + " " + c(0).slice(45, 45 + 8), c(0).slice(53, 53 + 6), c(1).slice(35, 35 + 10) + " 00:00:00", c(1).slice(45, 45 + 8), c(1).slice(35, 35 + 10) + " " + c(1).slice(45, 45 + 8), c(1).slice(53, 53 + 6), c(0).slice(59, 59 + 6), c(0).slice(65, 65 + 6), c(0).slice(71, 71 + 6), c(0).slice(77, 77 + 6), c(0).slice(83, 83 + 6), c(0).slice(89, 89 + 7), c(0).slice(96, 96 + 5), c(0).slice(96, 96 + 5).trim(), c(0).slice(35, 35 + 4) + c(0).slice(40, 40 + 2), c(1).slice(35, 35 + 4) + c(1).slice(40, 40 + 2))).map { case Array(s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21) => ResultSchema1(s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19.length, s20, s21) }.toDF()
+    val restb2 = reskv.map(c => Array(c(0).slice(15, 15 + 20), c(1).slice(59, 59 + 1), c(1).slice(60, 60 + 2), c(1).slice(62, 62 + 6), c(1).slice(68, 68 + 18), getHours(c(0).slice(0, 0 + 13), c(1).slice(0, 0 + 13)))).map { case Array(s0, s1, s2, s3, s4, s5) => ResultSchema2(s0, s1, s2, s3, s4, s5.toFloat) }.toDF()
+
+    reskv.unpersist()
+
+    restb1.registerTempTable("Res1Table")
+    restb2.registerTempTable("Res2Table")
+
+    val totalTable = sqlContext.sql("Select Res1Table.PKGNO, Res1Table.STATUSA2, Res1Table.STATUSB1, Res1Table.STATUSB2, Res1Table.PROC_DATEA, Res1Table.PROC_TIMEA, Res1Table.PROC_DTA, Res1Table.PROC_BRHA, Res1Table.PROC_DATEB, Res1Table.PROC_TIMEB, Res1Table.PROC_DTB, Res1Table.PROC_BRHB, Res1Table.PKGVALUE, Res1Table.PKGCOLL, Res1Table.PKGWEIGHT, Res1Table.PKGPOST, Res1Table.CONTRACTNO1, Res1Table.CONTRACTNO2, Res1Table.DESTZIPCODE, Res2Table.PROC_H, Res2Table.REASON, Res2Table.REC_BRH, Res2Table.REC_BRH_TEL, Res2Table.HOURS, Res1Table.DESTZIPCODE_LEN, Res1Table.PROC_YMA, Res1Table.PROC_YMB from Res1Table join Res2Table where Res1Table.PKGNO = Res2Table.PKGNO")
+
+    totalTable.cache()
+    totalTable.registerTempTable("TotalTable")
+
+    val tbpkg = sqlContext.sql("Select a.PKGNO, a.STATUSA2, a.STATUSB1, a.STATUSB2, a.PROC_DATEA, a.PROC_TIMEA, a.PROC_DTA, a.PROC_BRHA, a.PROC_DATEB, a.PROC_TIMEB, a.PROC_DTB, a.PROC_BRHB, a.PKGVALUE, a.PKGCOLL, a.PKGWEIGHT, a.PKGPOST, a.CONTRACTNO1, a.CONTRACTNO2, a.DESTZIPCODE, a.PROC_H, a.REASON, a.REC_BRH, a.REC_BRH_TEL, a.HOURS from TotalTable a")
+    tbpkg.coalesce(1).write.format("com.databricks.spark.csv").option("header", "true").save("file:/home/cloudera/atbpkg01.csv")
+
+    val tbpkgD1 = sqlContext.sql("select a.PROC_DATEA,a.PROC_YMA,substring(a.PROC_BRHA,1,3) as PROC_CHGBRHA,a.PROC_BRHA,count(a.PKGNO) as PKG_CNT,sum( case when a.HOURS <= 24 then 1 else 0 end ) as PKG_CNTJ0,sum( case when a.HOURS > 24 and a.HOURS <= 48 then 1 else 0 end ) as PKG_CNTJ1,sum( case when a.HOURS > 48 and a.HOURS <= 72 then 1 else 0 end ) as PKG_CNTJ2,sum( case when a.HOURS > 72 and a.HOURS <= 96 then 1 else 0 end ) as PKG_CNTJ3,sum( case when a.HOURS > 96 then 1 else 0 end ) as PKG_CNTJX,sum( case when a.HOURS <= 24 then a.HOURS else 0 end ) as PKG_HRSJ0,sum( case when a.HOURS > 24 and a.HOURS <= 48 then a.HOURS else 0 end ) as PKG_HRSJ1,sum( case when a.HOURS > 48 and a.HOURS <= 72 then a.HOURS else 0 end ) as PKG_HRSJ2,sum( case when a.HOURS > 72 and a.HOURS <= 96 then a.HOURS else 0 end ) as PKG_HRSJ3,sum( case when a.HOURS > 96 then a.HOURS else 0 end ) as PKG_HRSJX,count( case when a.STATUSB1=\"H\" then a.PKGNO else null end ) as PKG_CNTH,count( case when a.STATUSB1=\"I\" then a.PKGNO else null end ) as PKG_CNTI,sum(a.HOURS) as PKG_HRS,sum( case when a.STATUSB1=\"H\" then a.HOURS else 0 end ) as PKG_HRSH,sum( case when a.STATUSB1=\"I\" then a.HOURS else 0 end ) as PKG_HRSI from TotalTable a group by a.PROC_DATEA,a.PROC_YMA,substring(a.PROC_BRHA,1,3),a.PROC_BRHA")
+    tbpkgD1.coalesce(1).write.format("com.databricks.spark.csv").option("header", "true").save("file:/home/cloudera/atbpkgD1.csv")
+
+    val tbpkgD2 = sqlContext.sql("select a.PROC_DATEB ,a.PROC_YMB, substring(a.PROC_BRHB,1,3) as PROC_CHGBRHB, a.PROC_BRHB ,count(a.PKGNO) as PKG_CNT, sum( case when a.HOURS <= 24 then 1 else 0 end ) as PKG_CNTJ0, sum( case when a.HOURS >  24 and a.HOURS <= 48 then 1 else 0 end ) as PKG_CNTJ1, sum( case when a.HOURS >  48 and a.HOURS <= 72 then 1 else 0 end ) as PKG_CNTJ2, sum( case when a.HOURS >  72 and a.HOURS <= 96 then 1 else 0 end ) as PKG_CNTJ3, sum( case when a.HOURS >  96 then 1 else 0 end ) as PKG_CNTJX, sum( case when a.HOURS <= 24 then a.HOURS else 0 end ) as PKG_HRSJ0, sum( case when a.HOURS >  24 and a.HOURS <= 48 then a.HOURS else 0 end ) as PKG_HRSJ1, sum( case when a.HOURS >  48 and a.HOURS <= 72 then a.HOURS else 0 end ) as PKG_HRSJ2, sum( case when a.HOURS >  72 and a.HOURS <= 96 then a.HOURS else 0 end ) as PKG_HRSJ3, sum( case when a.HOURS >  96 then a.HOURS else 0 end ) as PKG_HRSJX, count( case when a.STATUSB1=\"H\" then a.PKGNO else null end ) as PKG_CNTH, count( case when a.STATUSB1=\"I\" then a.PKGNO else null end ) as PKG_CNTI, sum(a.HOURS) as PKG_HRS, sum( case when a.STATUSB1=\"H\" then a.HOURS else 0 end ) as PKG_HRSH, sum( case when a.STATUSB1=\"I\" then a.HOURS else 0 end ) as PKG_HRSI from TotalTable a group by a.PROC_DATEB ,a.PROC_YMB, substring(a.PROC_BRHB,1,3), a.PROC_BRHB")
+    tbpkgD2.coalesce(1).write.format("com.databricks.spark.csv").option("header", "true").save("file:/home/cloudera/atbpkgD2.csv")
+
+    val tbpkgH = sqlContext.sql("select (case when a.STATUSB1=\"H\" then \"Undone\" else \"Done\" end) as STATUSB_DESC, a.STATUSB2 as STATUSB2, substring(a.PROC_TIMEB,1,2) as PROC_BHH, a.PROC_DATEA, a.PROC_YMA, substring(a.PROC_BRHA,1,3) as PROC_CHGBRHA, a.PROC_BRHA, a.PROC_DATEB, a.PROC_YMB, substring(a.PROC_BRHB,1,3) as PROC_CHGBRHB, a.PROC_BRHB, (case when a.DESTZIPCODE_LEN < 3 then \"NA\" else substring(a.DESTZIPCODE,1,3) end) as DESTZIPCODE3, (case when a.HOURS <= 24 then \"J+0D\" when a.HOURS > 24 and a.HOURS <= 48 then \"J+1D\" when a.HOURS > 48 and a.HOURS <= 72 then \"J+2D\" when a.HOURS > 72 and a.HOURS <= 96 then \"J+3D\" when a.HOURS > 96 then \"J+3D above\" else \"NA\" end) as PROCDURGROUP, count(a.PKGNO) as PKG_CNT, count( case when a.STATUSB1=\"H\" then a.PKGNO else null end ) as PKG_CNTH, count( case when a.STATUSB1=\"I\" then a.PKGNO else null end ) as PKG_CNTI, sum(a.HOURS) as PKG_HRS, sum( case when a.STATUSB1=\"H\" then a.HOURS else 0 end ) as PKG_HRSH, sum( case when a.STATUSB1=\"I\" then a.HOURS else 0 end ) as PKG_HRSI from TotalTable a group by (case when a.STATUSB1=\"H\" then \"Undone\" else \"Done\" end), a.STATUSB2, substring(a.PROC_TIMEB,1,2), a.PROC_DATEA, a.PROC_YMA, substring(a.PROC_BRHA,1,3), a.PROC_BRHA, a.PROC_DATEB, a.PROC_YMB, substring(a.PROC_BRHB,1,3), a.PROC_BRHB, (case when DESTZIPCODE_LEN < 3 then \"NA\" else substring(a.DESTZIPCODE,1,3) end), (case when a.HOURS <= 24 then \"J+0D\" when a.HOURS >  24 and a.HOURS <= 48 then \"J+1D\" when a.HOURS > 48 and a.HOURS <= 72 then \"J+2D\" when a.HOURS >  72 and a.HOURS <= 96 then \"J+3D\" when a.HOURS >  96 then  \"J+3D above\" else \"NA\" end)")
+    tbpkgH.coalesce(1).write.format("com.databricks.spark.csv").option("header", "true").save("file:/home/cloudera/atbpkgH.csv")
+
+
+
+  }}
+
+
 
 # 中華郵政            投遞郵寄資料分析
 
