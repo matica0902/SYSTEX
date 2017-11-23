@@ -18,6 +18,7 @@ import java.util.Date
 
 
 case class ResultSchema1(PKGNO:String, STATUSA2:String, STATUSB1:String, STATUSB2:String, PROC_DATEA:String, PROC_TIMEA:String, PROC_DTA:String, PROC_BRHA:String, PROC_DATEB:String, PROC_TIMEB:String, PROC_DTB:String, PROC_BRHB:String, PKGVALUE:String, PKGCOLL:String, PKGWEIGHT:String, PKGPOST:String, CONTRACTNO1:String, CONTRACTNO2:String, DESTZIPCODE:String, DESTZIPCODE_LEN:Int, PROC_YMA:String, PROC_YMB:String)
+
 case class ResultSchema2(PKGNO:String, PROC_H:String, REASON:String, REC_BRH:String, REC_BRH_TEL:String, HOURS:Float)
 
 object Main {
