@@ -1,11 +1,18 @@
 # 修正後程式碼
 import org.apache.spark._
+
 import org.apache.spark.SparkConf
+
 import org.apache.spark.SparkContext
+
 import org.apache.spark.sql.SQLContext
+
 import org.apache.spark.sql.functions._
+
 import java.sql.Timestamp
+
 import java.text.SimpleDateFormat
+
 import java.util.Date
 
 
